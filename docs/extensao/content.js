@@ -227,23 +227,42 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
       close(); say('Resposta inserida. Revise antes de enviar.');
       return;
     }
-    // Select only the slash token, preserving formatting and all surrounding text.
-    const range = ctx.range.cloneRange();
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let n, offset = 0, startNode = null, startOffset = 0;
-    while ((n = walker.nextNode())) {
-      if (offset + n.length >= ctx.token.start) { startNode = n; startOffset = ctx.token.start - offset; break; }
-      offset += n.length;
-    }
-    if (!startNode) { fail('Não foi possível selecionar o atalho neste editor. Use Copiar na extensão.'); return; }
-    range.setStart(startNode, startOffset);
+    // Select only the slash token, preserving formatting and all surrounding text. Both ends are found again in the
+    // current DOM: editors like Lexical (WhatsApp Web) re-render text nodes on every key, so the range saved while typing is stale.
+    const range = tokenRange(el, ctx.token);
+    if (!range) { fail('Não foi possível selecionar o atalho neste editor. Use Copiar na extensão.'); return; }
     const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
     filling = true;
-    // Native editing retains undo support and emits input for rich text frameworks.
-    const ok = document.execCommand('insertText', false, text);
-    filling = false;
-    if (!ok) { fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); return; }
-    close(); say('Resposta inserida. Revise antes de enviar.');
+    const done = () => { filling = false; close(); say('Resposta inserida. Revise antes de enviar.'); };
+    const landed = () => valueOf(el).includes(text.split('\n')[0].slice(0, 40));
+    // Framework editors keep their own model and drop direct DOM edits, but all of them handle paste.
+    // A plain contenteditable ignores the synthetic paste (not cancelled), so it falls through to native editing.
+    // The paste waits a frame so the editor has picked up the new selection before replacing it.
+    // Editors sync their selection from selectionchange; firing it now makes them read the token selection right away.
+    document.dispatchEvent(new Event('selectionchange'));
+    requestAnimationFrame(() => {
+      const data = new DataTransfer(); data.setData('text/plain', text);
+      const paste = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
+      if (!el.dispatchEvent(paste)) {
+        setTimeout(() => { if (landed()) done(); else { filling = false; fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); } }, 60);
+        return;
+      }
+      // Native editing retains undo support and emits input for simple rich text editors.
+      const again = tokenRange(el, ctx.token); if (again) { selection.removeAllRanges(); selection.addRange(again); }
+      const ok = document.execCommand('insertText', false, text);
+      // Some editors report success and then roll the DOM back; check that the text stayed before closing.
+      setTimeout(() => { if (ok && landed()) done(); else { filling = false; fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); } }, 60);
+    });
+  }
+  function tokenRange(el, token) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
+    let n, offset = 0, start = false;
+    while ((n = walker.nextNode())) {
+      if (!start && offset + n.length >= token.start) { range.setStart(n, token.start - offset); start = true; }
+      if (start && offset + n.length >= token.end) { range.setEnd(n, token.end - offset); return range; }
+      offset += n.length;
+    }
+    return null;
   }
   function back() {
     const ctx = context;
