@@ -6,7 +6,7 @@ Extensão Chrome (Manifest V3) de respostas rápidas para qualquer canal de aten
 Na conversa, digite `/`, escolha uma mensagem com ↑ ↓ e insira com Tab ou Enter.
 A extensão só preenche o campo. Quem revisa e envia é o atendente.
 
-**[Experimente no navegador, sem instalar →](https://jvfaraco.github.io/quick-replies/)**
+**[Instalar grátis na Chrome Web Store →](https://chromewebstore.google.com/detail/quick-replies/gionfdgjnnccfnpjnojdnpedemocaloc)** · [Experimentar no navegador, sem instalar](https://jvfaraco.github.io/quick-replies/)
 
 ![Digitando / na conversa, escolhendo a saudação e inserindo com Tab](docs/demo.gif)
 
@@ -30,15 +30,11 @@ Nasceu de uma versão interna usada pela equipe de atendimento do Alarme 365, da
 
 ## Instalar
 
-**Pacote pronto:** baixe o `.zip` da [última release](../../releases/latest), descompacte, abra `chrome://extensions`, ative o **Modo do desenvolvedor** e clique em **Carregar sem compactação** apontando para a pasta `quick-replies`.
+Pela **[Chrome Web Store](https://chromewebstore.google.com/detail/quick-replies/gionfdgjnnccfnpjnojdnpedemocaloc)**: clique em **Usar no Chrome** e pronto. As atualizações chegam sozinhas. No Edge, a mesma página funciona depois de permitir extensões de outras lojas.
 
-**Pelo código:**
+Ao instalar, a biblioteca abre com os três primeiros passos.
 
-1. Clone o repositório.
-2. Abra `chrome://extensions`, ative o **Modo do desenvolvedor**.
-3. Clique em **Carregar sem compactação** e escolha a pasta do projeto.
-
-Funciona também no Edge (`edge://extensions`). Ao instalar, a biblioteca abre com os três primeiros passos.
+**Para desenvolver ou testar uma versão nova:** baixe o `.zip` da [última release](../../releases/latest) ou clone o repositório, abra `chrome://extensions`, ative o **Modo do desenvolvedor** e clique em **Carregar sem compactação** apontando para a pasta.
 
 ## Como usar em 1 minuto
 
