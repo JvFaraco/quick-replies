@@ -191,6 +191,17 @@ test('planilha da equipe: conecta, marca as respostas, preserva as locais e desc
   page.once('dialog', d => d.accept()); await page.getByRole('button', { name: 'Desconectar' }).click();
   await expect(page.locator('#team-form')).toBeVisible(); await expect(page.locator('#count')).toHaveText(String(DEFAULTS));
 });
+test('criar planilha copia a tabela e abre uma planilha nova do Google', async ({ page }) => {
+  await page.goto(file('biblioteca.html')); await page.getByRole('tab', { name: 'Equipe' }).click();
+  await page.evaluate(() => {
+    globalThis.opened = []; window.open = url => { globalThis.opened.push(url); return null; };
+    navigator.clipboard.write = async items => { globalThis.copied = await (await items[0].getType('text/html')).text(); };
+  });
+  await page.getByRole('button', { name: /Criar planilha no Google/ }).click();
+  await expect(page.locator('#status')).toContainText('Ctrl+V');
+  expect(await page.evaluate(() => globalThis.opened)).toEqual(['https://sheets.new']);
+  expect(await page.evaluate(() => globalThis.copied)).toContain('<th>mensagem</th>');
+});
 test('variáveis fixas são salvas, validadas e mostram as automáticas', async ({ page }) => {
   await page.goto(file('biblioteca.html'));
   await page.getByRole('tab', { name: 'Variáveis' }).click();

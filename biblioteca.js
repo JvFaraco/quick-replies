@@ -164,7 +164,7 @@ $('vars').onsubmit = async e => {
 const when = ts => new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 async function renderTeam() {
   team = await QR.loadTeam();
-  $('team-form').hidden = !!team; $('team-info').hidden = !team;
+  $('team-setup').hidden = !!team; $('team').hidden = $('team-info').hidden = !team;
   if (!team) return;
   $('team-url-view').textContent = team.url;
   $('team-open').href = team.url.replace(/\/export\?format=csv.*$/, '/edit');
@@ -196,10 +196,19 @@ $('team-disconnect').onclick = async () => {
   if (!confirm('Desconectar a planilha? As respostas atuais continuam na sua biblioteca, mas param de atualizar.')) return;
   await QR.saveTeam(null); await reload(); await renderTeam(); status('Planilha desconectada.');
 };
+// Copies the library as a table (pastes into the four columns) and opens a blank Google Sheet. Without clipboard, falls back to the CSV file.
 $('team-sheet').onclick = async () => {
-  const model = QR.toCSV(rows.length ? rows : QR_DEFAULTS);
-  try { await navigator.clipboard.writeText(model); status('Modelo copiado. Cole numa planilha nova do Google (Ctrl+V) e use Dados > Dividir texto em colunas, se precisar.'); }
-  catch { download('modelo-equipe.csv', '﻿' + model, 'text/csv;charset=utf-8'); status('Modelo baixado. Importe no Google Planilhas.'); }
+  const list = rows.length ? rows : QR_DEFAULTS, { html, text } = QR.toSheet(list);
+  try {
+    try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]); }
+    catch { await navigator.clipboard.writeText(text); }
+  } catch {
+    download('modelo-equipe.csv', '﻿' + QR.toCSV(list), 'text/csv;charset=utf-8');
+    status('Não deu para copiar, então baixei o modelo. Na planilha nova: Arquivo → Importar → Fazer upload.');
+    window.open('https://sheets.new', '_blank', 'noopener'); return;
+  }
+  window.open('https://sheets.new', '_blank', 'noopener');
+  status(`Planilha nova aberta em outra aba, com ${list.length} respostas copiadas. Clique na célula A1 e cole (Ctrl+V).`);
 };
 
 // Sites

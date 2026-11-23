@@ -126,3 +126,9 @@ test('mesclar pacotes mantém as respostas atuais e pula atalhos repetidos', () 
   assert.deepEqual(merged.rows.map(r => r.shortcut), ['ola', 'novo']);
   assert.equal(merged.rows[0].title, 'Minha'); assert.deepEqual(merged.skipped, ['ola']);
 });
+test('modelo da planilha copia tabela com 4 colunas, quebra de linha na célula e fórmula neutralizada', () => {
+  const { html, text } = QR.toSheet([{ shortcut: 'ola', title: 'Oi <b>', category: 'Geral', body: 'Linha 1\nLinha 2' }, { shortcut: 'x', title: '=1+1', category: '', body: 'ok' }]);
+  assert.match(html, /^<table><tr><th>atalho<\/th><th>titulo<\/th><th>categoria<\/th><th>mensagem<\/th><\/tr>/);
+  assert.match(html, /<td>Oi &lt;b&gt;<\/td>/); assert.match(html, /<td>Linha 1<br>Linha 2<\/td>/); assert.match(html, /<td>'=1\+1<\/td>/);
+  assert.equal(text.split('\n')[1], 'ola\tOi <b>\tGeral\tLinha 1 Linha 2');
+});

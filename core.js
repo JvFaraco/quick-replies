@@ -112,6 +112,16 @@
   const unquote = v => v.replace(AT_CELL_QUOTED, '$1');
   const cell = raw => { const v = neutralize(raw); return /[",;\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
   const toCSV = rows => ['sep=;', 'atalho;titulo;categoria;mensagem', ...rows.map(r => [r.shortcut, r.title, r.category, r.body].map(cell).join(';'))].join('\n') + '\n';
+  // Clipboard model for a new Google Sheet: an HTML table pastes straight into the four columns, line breaks kept inside the cell.
+  // Same formula guard as the CSV; the sheet's own CSV export brings the ' back and parseCSV removes it.
+  const html = v => v.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  function toSheet(rows) {
+    const head = ['atalho', 'titulo', 'categoria', 'mensagem'], data = rows.map(r => [r.shortcut, r.title, r.category, r.body].map(v => neutralize(String(v ?? ''))));
+    return {
+      html: `<table><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr>${data.map(r => `<tr>${r.map(v => `<td>${html(v).replace(/\r?\n/g, '<br>')}</td>`).join('')}</tr>`).join('')}</table>`,
+      text: [head, ...data.map(r => r.map(v => v.replace(/[\t\r\n]+/g, ' ')))].map(r => r.join('\t')).join('\n') + '\n'
+    };
+  }
 
   // Team library: a Google Sheets link (shared "anyone with the link") or any https URL serving CSV or the exported JSON.
   function teamUrl(input) {
@@ -137,7 +147,7 @@
   }
 
   const store = typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null;
-  globalThis.QR = { normalize, validate, search, token, variables, fill, merge, automatic, validateVariables, known, missing, sitePattern, validateSites, parseCSV, toCSV, teamUrl, parseLibraryText, applyTeam,
+  globalThis.QR = { normalize, validate, search, token, variables, fill, merge, automatic, validateVariables, known, missing, sitePattern, validateSites, parseCSV, toCSV, toSheet, teamUrl, parseLibraryText, applyTeam,
     // One-step undo for replacing or importing: the previous library is kept until the next replacement.
     async saveBackup(rows) { await store.set({ backup: { library: validate(rows), at: Date.now() } }); },
     async loadBackup() { const { backup } = await store.get('backup'); return backup ? { library: validate(backup.library), at: backup.at } : null; },
