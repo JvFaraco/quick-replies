@@ -56,4 +56,23 @@ $('activate').onclick = async () => {
   } catch { say('Não foi possível ativar nesta página. Abra a conversa e tente novamente.'); }
   finally { $('activate').disabled = false; }
 };
+// Team sheet line: last update (or the error) and a manual sync. Opening the popup refreshes a sheet older than 5 minutes without blocking the UI.
+// Time only for today; older syncs show the date too, so a sheet stuck for days does not look fresh.
+const hhmm = ts => {
+  const d = new Date(ts), time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? `às ${time}` : `em ${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} às ${time}`;
+};
+async function showTeam() {
+  const team = await QR.loadTeam();
+  $('team-line').hidden = !team;
+  if (team) $('team-text').textContent = team.error ? `Planilha da equipe: erro. ${team.error}` : `Planilha da equipe: atualizada ${hhmm(team.syncedAt)}`;
+  return team;
+}
+async function syncNow() {
+  $('team-sync').disabled = true; $('team-text').textContent = 'Planilha da equipe: sincronizando…';
+  try { await QR.syncTeam(); rows = await QR.load(); render(); } catch {}
+  finally { await showTeam(); $('team-sync').disabled = false; }
+}
+$('team-sync').onclick = syncNow;
 Promise.all([QR.load(), QR.loadVariables()]).then(([data, vars]) => { rows = data; fixed = vars; render(); }).catch(e => { $('status').textContent = e.message; });
+showTeam().then(team => { if (team && (!team.syncedAt || Date.now() - team.syncedAt > 5 * 60 * 1000)) syncNow(); }).catch(() => {});

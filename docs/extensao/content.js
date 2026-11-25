@@ -6,7 +6,7 @@
   let library = [], fixed = {}, matches = [], index = 0, context = null, composing = false, filling = false;
   // open: logical state (the panel may still be fading out); side: anchored above or below the editor while open.
   let open = false, view = null, query = null, side = null, listEl = null, cursorEl = null;
-  let closing = null, heightAnim = null, noticeTimer = 0, frame = 0, pointer = '', pointerMoved = false;
+  let last = null, closing = null, heightAnim = null, noticeTimer = 0, frame = 0, pointer = '', pointerMoved = false;
   const host = document.createElement('quick-replies');
   const root = host.attachShadow({ mode: 'closed' });
   const style = document.createElement('style');
@@ -51,7 +51,38 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
   document.documentElement.append(host);
   const node = (tag, text, cls) => { const e = document.createElement(tag); if (text) e.textContent = text; if (cls) e.className = cls; return e; };
   const animate = (el, frames, options) => motion && el.animate ? el.animate(frames, { easing: EASE, ...options }) : null;
-  const valueOf = el => 'value' in el ? el.value : el.textContent;
+  // Plain text of a rich editor as the user sees it: "\n" between blocks and at <br>, so a shortcut typed on a new line
+  // is preceded by whitespace. Text node positions (parts) and an optional caret use the same offsets as the text.
+  const BLOCK = /^(P|DIV|LI|UL|OL|BLOCKQUOTE|PRE|H[1-6]|TR|TABLE|SECTION|ARTICLE)$/;
+  function flatten(el, stop, at) {
+    let text = '', caret = -1, pending = false;
+    const parts = [];
+    const brk = () => { if (text && !text.endsWith('\n')) text += '\n'; pending = false; };
+    const flush = () => { if (pending) brk(); };
+    const visit = n => {
+      if (n.nodeType === 3) {
+        if (n.length) flush();
+        if (n === stop) caret = text.length + Math.min(at, n.length);
+        parts.push({ node: n, at: text.length }); text += n.data; return;
+      }
+      if (n.nodeType !== 1) return;
+      const block = n !== el && BLOCK.test(n.nodeName);
+      if (block) brk();
+      if (n.nodeName === 'BR') {
+        // A trailing <br> is the browser's placeholder that keeps an empty or ended line visible.
+        if (n.nextSibling || !(n.parentNode === el || BLOCK.test(n.parentNode.nodeName))) { flush(); text += '\n'; }
+        return;
+      }
+      const kids = n.childNodes;
+      for (let i = 0; i < kids.length; i++) { if (n === stop && i === at) caret = text.length; visit(kids[i]); }
+      if (n === stop && at >= kids.length && caret < 0) caret = text.length;
+      if (block) pending = true;
+    };
+    visit(el);
+    return { text, caret, parts };
+  }
+  const valueOf = el => 'value' in el ? el.value : flatten(el).text;
+  const count = (s, needle) => { let c = 0; if (!needle) return 0; for (let i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + needle.length)) c++; return c; };
   // Keep focus in the conversation field while the list is used with the mouse.
   panel.addEventListener('mousedown', e => { if (!filling) e.preventDefault(); });
   function close() {
@@ -81,8 +112,9 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     const sel = window.getSelection();
     if (!sel.rangeCount || !sel.isCollapsed || !el.contains(sel.anchorNode)) return null;
     const range = sel.getRangeAt(0).cloneRange();
-    const before = document.createRange(); before.selectNodeContents(el); before.setEnd(range.startContainer, range.startOffset);
-    return { el, text: el.textContent, caret: before.toString().length, range };
+    const flat = flatten(el, range.startContainer, range.startOffset);
+    if (flat.caret < 0) return null;
+    return { el, text: flat.text, caret: flat.caret, range };
   }
   function focusAt(ctx) {
     ctx.el.focus({ preventScroll: true });
@@ -194,6 +226,7 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     const el = editor(event.target);
     if (!el) { close(); return; }
     const snap = snapshot(el);
+    last = snap && { el, text: snap.text, caret: snap.caret };
     const token = snap && QR.token(snap.text, snap.caret);
     if (!token) { close(); return; }
     const same = open && view === 'list' && context?.el === el && token.query === query;
@@ -233,10 +266,19 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     if (!range) { fail('Não foi possível selecionar o atalho neste editor. Use Copiar na extensão.'); return; }
     const selection = window.getSelection();
     filling = true;
-    const refused = () => { filling = false; fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); };
-    const done = () => { filling = false; close(); say('Resposta inserida. Revise antes de enviar.'); };
-    const slash = ctx.text.slice(ctx.token.start, ctx.token.end), head = text.split('\n')[0].slice(0, 40);
-    const landed = () => { const v = valueOf(el); return v.includes(head) && !v.includes(slash + head); };
+    // The user typing or leaving the field mid-insertion moves the caret: stop instead of erasing or pasting elsewhere.
+    let aborted = false;
+    const stop = e => { if (e.isTrusted) aborted = true; };
+    const away = () => aborted || document.activeElement !== el && !el.contains(document.activeElement);
+    window.addEventListener('keydown', stop, true); window.addEventListener('input', stop, true); el.addEventListener('blur', stop);
+    const end = () => { filling = false; window.removeEventListener('keydown', stop, true); window.removeEventListener('input', stop, true); el.removeEventListener('blur', stop); };
+    const refused = () => { end(); fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); };
+    const done = () => { end(); close(); say('Resposta inserida. Revise antes de enviar.'); };
+    const slash = ctx.text.slice(ctx.token.start, ctx.token.end);
+    const head = (text.split('\n').find(line => line.trim()) || '').slice(0, 40);
+    // The reply must add one more occurrence of its first line; a repeated reply already in the field proves nothing.
+    const already = count(ctx.text, head);
+    const landed = () => { const v = valueOf(el); return !head || count(v, head) > already && !v.includes(slash + head); };
     // Caret right after the token, where the user stopped typing.
     const caret = range.cloneRange(); caret.collapse(false); selection.removeAllRanges(); selection.addRange(caret);
     document.dispatchEvent(new Event('selectionchange'));
@@ -244,15 +286,16 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     // ignored. They do handle key commands and paste, so the token is erased with Backspace and the reply goes in as a paste.
     // A plain contenteditable leaves the synthetic Backspace uncancelled (it does nothing), and uses native editing instead.
     requestAnimationFrame(() => {
-      const key = () => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true, cancelable: true }));
+      if (away()) { refused(); return; }
+      const key =() => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true, cancelable: true }));
       if (!key()) {
         // One key per frame: some editor versions apply only the first of several commands sent in the same tick.
         const wait = ms => new Promise(r => setTimeout(r, ms));
         const target = ctx.text.slice(0, ctx.token.start) + ctx.text.slice(ctx.token.end);
         (async () => {
-          for (let i = 1; i < slash.length && valueOf(el) !== target; i++) { await wait(16); key(); }
+          for (let i = 1; i < slash.length && valueOf(el) !== target; i++) { await wait(16); if (away()) { refused(); return; } key(); }
           await wait(30);
-          if (valueOf(el) !== target) { refused(); return; }
+          if (away() || valueOf(el) !== target) { refused(); return; }
           const data = new DataTransfer(); data.setData('text/plain', text);
           el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
           await wait(60);
@@ -268,12 +311,11 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     });
   }
   function tokenRange(el, token) {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
-    let n, offset = 0, start = false;
-    while ((n = walker.nextNode())) {
-      if (!start && offset + n.length >= token.start) { range.setStart(n, token.start - offset); start = true; }
-      if (start && offset + n.length >= token.end) { range.setEnd(n, token.end - offset); return range; }
-      offset += n.length;
+    const range = document.createRange();
+    let start = false;
+    for (const { node: n, at } of flatten(el).parts) {
+      if (!start && at <= token.start && at + n.length >= token.start) { range.setStart(n, token.start - at); start = true; }
+      if (start && at <= token.end && at + n.length >= token.end) { range.setEnd(n, token.end - at); return range; }
     }
     return null;
   }
@@ -339,7 +381,8 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
   document.addEventListener('focusout', () => { setTimeout(() => { if (!filling && document.activeElement !== host && !editor(document.activeElement)) close(); }, 0); }, true);
   document.addEventListener('compositionstart', () => { composing = true; close(); }, true);
   document.addEventListener('compositionend', e => { composing = false; refresh(e); }, true);
-  document.addEventListener('keydown', e => {
+  // On window in the capture phase, so the menu keys are handled before the site's own capture listeners on document.
+  window.addEventListener('keydown', e => {
     if (!open || !e.isTrusted) return;
     if (e.key === 'Escape') {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -357,7 +400,13 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     select(Math.abs(step) === 1 ? (index + step + count) % count : Math.max(0, Math.min(count - 1, index + step)), true, e.repeat);
   }, true);
   // Editors that render the first character themselves (Lexical on an empty field) fire no input event, so typed keys refresh too.
-  document.addEventListener('keyup', e => { if (['ArrowLeft','ArrowRight','Home','End','Backspace','Delete'].includes(e.key) || e.key.length === 1) refresh(e); }, true);
+  document.addEventListener('keyup', e => {
+    if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Backspace','Delete'].includes(e.key) && e.key.length !== 1) return;
+    // Most keys already refreshed on input; skip the work when neither the text nor the caret moved since then.
+    const el = e.isTrusted && !composing && !filling && editor(e.target), snap = el && snapshot(el);
+    if (snap && last?.el === el && last.text === snap.text && last.caret === snap.caret) return;
+    refresh(e);
+  }, true);
   window.addEventListener('pointermove', e => { const at = `${e.clientX},${e.clientY}`; pointerMoved = at !== pointer; pointer = at; }, true);
   // New messages scroll the conversation; follow the editor instead of closing the menu.
   window.addEventListener('scroll', () => { if (open) schedule(); }, true);

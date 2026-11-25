@@ -16,7 +16,7 @@ Nasceu de uma versão interna usada pela equipe de atendimento do Alarme 365, da
 
 - **Atalhos com `/`** no campo de mensagem: busca por atalho, título, categoria ou texto, sem diferenciar acentos.
 - **Funciona em qualquer site.** Abra a conversa, clique no ícone da extensão e em **Ativar nesta aba**. O site fica salvo e, da próxima vez, o `/` já funciona sozinho.
-- **Biblioteca da equipe por planilha.** O gestor mantém uma planilha do Google; cada atendente cola o link uma vez e a extensão atualiza sozinha a cada 30 minutos. Respostas próprias do atendente continuam dele.
+- **Biblioteca da equipe por planilha.** O gestor mantém uma planilha do Google; cada atendente cola o link uma vez e a extensão atualiza sozinha a cada 10 minutos. Respostas próprias do atendente continuam dele.
 - **Variáveis automáticas**: `{{saudacao}}` vira "Bom dia", "Boa tarde" ou "Boa noite" conforme a hora; `{{data}}` e `{{hora}}` também.
 - **Variáveis fixas**: `{{empresa}}`, `{{atendente}}` ou qualquer outra que você cadastrar uma vez na aba Variáveis e nunca mais digitar.
 - **Campos na hora**: qualquer outra variável, como `{{nome}}` ou `{{pedido}}`, abre um formulário curto antes de inserir. Campo repetido pede um valor só.
@@ -51,7 +51,7 @@ Para testar sem nenhum sistema, abra a área de teste pelo link **Testar atalhos
 2. Compartilhar → Acesso geral → **Qualquer pessoa com o link**, como Leitor.
 3. Cada atendente cola o link da planilha na aba **Equipe** e clica em **Conectar**.
 
-A partir daí a extensão baixa a planilha a cada 30 minutos e ao abrir o navegador. Linhas removidas da planilha somem da biblioteca; respostas criadas pelo atendente com atalhos que não estão na planilha ficam. Um link direto para CSV ou para o JSON exportado também funciona.
+A partir daí a extensão baixa a planilha a cada 10 minutos e ao abrir o navegador. Linhas removidas da planilha somem da biblioteca; respostas criadas pelo atendente com atalhos que não estão na planilha ficam. Linhas inválidas (atalho vazio ou repetido, campo faltando) não derrubam a sincronização: ficam de fora e a aba **Equipe** lista o número de cada uma. Se uma resposta sua tiver o mesmo atalho de uma da planilha, a da planilha vence e o aviso mostra quais foram trocadas (dá para desfazer). Em caso de erro, o ícone da extensão ganha um selo vermelho e o popup mostra o motivo, com o botão **Sincronizar agora**. Ao **Desconectar**, a permissão do endereço da planilha é devolvida ao Chrome. Um link direto para CSV ou para o JSON exportado também funciona.
 
 ![Pacotes de partida](docs/pacotes-escuro.png)
 

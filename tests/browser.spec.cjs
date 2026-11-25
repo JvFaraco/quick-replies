@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
         async set(data) { const all = { ...read(), ...data }; localStorage.setItem('test-store', JSON.stringify(all)); const changes = Object.fromEntries(Object.keys(data).map(k => [k, { newValue: data[k] }])); listeners.forEach(fn => fn(changes, 'local')); },
         async remove(key) { const all = read(); delete all[key]; localStorage.setItem('test-store', JSON.stringify(all)); listeners.forEach(fn => fn({ [key]: {} }, 'local')); }
       }, onChanged: { addListener(fn) { listeners.push(fn); } } },
-      permissions: { async contains() { return true; }, async request() { globalThis.requested = (globalThis.requested || 0) + 1; return true; }, async remove() { return true; } },
+      permissions: { async contains() { return true; }, async request() { globalThis.requested = (globalThis.requested || 0) + 1; return !globalThis.denyPermission; }, async remove(p) { (globalThis.removed = globalThis.removed || []).push(p.origins); return true; } },
       tabs: { async query() { return [{ id: 1, url: 'https://app.exemplo.com/atendimento/42' }]; } },
       scripting: { async executeScript() { globalThis.injected = (globalThis.injected || 0) + 1; } },
       runtime: { openOptionsPage() {} }
@@ -174,9 +174,10 @@ test('planilha da equipe: conecta, marca as respostas, preserva as locais e desc
   await page.goto(file('biblioteca.html')); await expect(page.locator('#count')).toHaveText(String(DEFAULTS));
   await page.getByRole('tab', { name: 'Equipe' }).click();
   await page.locator('#team-url').fill('https://exemplo.com/privada.csv'); await page.getByRole('button', { name: 'Conectar' }).click();
-  await expect(page.locator('#status')).toContainText('devolveu uma página'); await expect(page.locator('#team-form')).toBeVisible();
+  await expect(page.locator('#status')).toContainText('não está pública'); await expect(page.locator('#team-form')).toBeVisible();
   await page.locator('#team-url').fill('https://docs.google.com/spreadsheets/d/ABC123/edit?usp=sharing#gid=0'); await page.getByRole('button', { name: 'Conectar' }).click();
   await expect(page.locator('#status')).toContainText('2 respostas da equipe');
+  await expect(page.locator('#status')).toContainText('2 respostas suas com o mesmo atalho foram trocadas pela versão da planilha: /ola, /finalizar');
   await expect(page.locator('#team-info')).toBeVisible(); await expect(page.locator('#team-meta')).toContainText('2 respostas da equipe');
   // Both team shortcuts already existed, so they are replaced and the count stays.
   await expect(page.locator('#count')).toHaveText(String(DEFAULTS));
@@ -190,6 +191,40 @@ test('planilha da equipe: conecta, marca as respostas, preserva as locais e desc
   await page.getByRole('tab', { name: 'Equipe' }).click();
   page.once('dialog', d => d.accept()); await page.getByRole('button', { name: 'Desconectar' }).click();
   await expect(page.locator('#team-form')).toBeVisible(); await expect(page.locator('#count')).toHaveText(String(DEFAULTS));
+  expect(await page.evaluate(() => globalThis.removed)).toEqual([['https://docs.google.com/*']]);
+});
+test('planilha da equipe: permissão negada não conecta; desconectar preserva a permissão de um site ativado', async ({ page }) => {
+  await page.route('https://docs.google.com/spreadsheets/d/ABC123/export?format=csv', route => route.fulfill({ status: 200, headers: { 'content-type': 'text/csv', 'access-control-allow-origin': '*' }, body: 'atalho;titulo;categoria;mensagem\nnovo;Novo;Equipe;Olá\n;sem atalho;Equipe;x\n' }));
+  await page.goto(file('biblioteca.html')); await page.getByRole('tab', { name: 'Equipe' }).click();
+  await page.evaluate(() => { globalThis.denyPermission = true; });
+  await page.locator('#team-url').fill('https://docs.google.com/spreadsheets/d/ABC123/edit'); await page.getByRole('button', { name: 'Conectar' }).click();
+  await expect(page.locator('#status')).toContainText('permissão'); await expect(page.locator('#team-form')).toBeVisible();
+  expect(await page.evaluate(async () => (await chrome.storage.local.get('team')).team)).toBeUndefined();
+  await page.evaluate(async () => { globalThis.denyPermission = false; await chrome.storage.local.set({ sites: ['https://docs.google.com/*'] }); });
+  await page.getByRole('button', { name: 'Conectar' }).click();
+  await expect(page.locator('#team-info')).toBeVisible(); await expect(page.locator('#team-skipped')).toContainText('linha 3 (');
+  await expect(page.locator('#team-meta')).toContainText('em até 10 minutos');
+  page.once('dialog', d => d.accept()); await page.getByRole('button', { name: 'Desconectar' }).click();
+  await expect(page.locator('#team-form')).toBeVisible();
+  expect(await page.evaluate(() => globalThis.removed)).toBeUndefined();
+});
+test('planilha da equipe: erro aparece com horário e a tentativa seguinte em até 10 minutos', async ({ page }) => {
+  await page.goto(file('biblioteca.html'));
+  await page.evaluate(async () => chrome.storage.local.set({ team: { url: 'https://exemplo.com/equipe.csv', shortcuts: [], count: 1, syncedAt: 1, error: 'A planilha não está pública.', errorAt: Date.now() } }));
+  await page.getByRole('tab', { name: 'Equipe' }).click();
+  await expect(page.locator('#team-meta')).toContainText(/Erro em .*A planilha não está pública\..*em até 10 minutos/);
+});
+test('o título muda por aba e a contagem, o botão e a dica de edição só aparecem em Respostas', async ({ page }) => {
+  await page.goto(file('biblioteca.html'));
+  const heading = page.locator('#heading');
+  await expect(heading).toContainText('Respostas rápidas'); await expect(page.locator('#count')).toBeVisible(); await expect(page.locator('#new')).toBeVisible();
+  for (const name of ['Pacotes', 'Variáveis', 'Equipe', 'Sites']) {
+    await page.getByRole('tab', { name }).click();
+    await expect(heading).toHaveText(name); await expect(page.locator('#count')).toBeHidden(); await expect(page.locator('#new')).toBeHidden();
+    await expect(page.locator('#status')).not.toContainText('Escolha uma resposta');
+  }
+  await page.getByRole('tab', { name: 'Respostas' }).click();
+  await expect(heading).toContainText('Respostas rápidas'); await expect(page.locator('#count')).toBeVisible(); await expect(page.locator('#status')).toContainText('Escolha uma resposta');
 });
 test('criar planilha abre o modelo; a alternativa copia a tabela e abre uma planilha nova', async ({ page }) => {
   await page.goto(file('biblioteca.html')); await page.getByRole('tab', { name: 'Equipe' }).click();

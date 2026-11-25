@@ -1,5 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+// In-memory chrome.storage.local so syncTeam can run in Node.
+const data = {};
+globalThis.chrome = { storage: { local: {
+  async get(key) { return key in data ? { [key]: structuredClone(data[key]) } : {}; },
+  async set(obj) { Object.assign(data, structuredClone(obj)); },
+  async remove(key) { delete data[key]; }
+} } };
 require('../catalogo.js'); require('../core.js');
 test('atalho exige limite de palavra e respeita posição do cursor', () => {
   assert.equal(QR.token('https://site.com/semvoz', 23), null);
@@ -131,4 +138,59 @@ test('modelo da planilha copia tabela com 4 colunas, quebra de linha na célula 
   assert.match(html, /^<table><tr><th>atalho<\/th><th>titulo<\/th><th>categoria<\/th><th>mensagem<\/th><\/tr>/);
   assert.match(html, /<td>Oi &lt;b&gt;<\/td>/); assert.match(html, /<td>Linha 1<br>Linha 2<\/td>/); assert.match(html, /<td>'=1\+1<\/td>/);
   assert.equal(text.split('\n')[1], 'ola\tOi <b>\tGeral\tLinha 1 Linha 2');
+});
+
+test('planilha: linhas inválidas são puladas com o número da linha e as boas entram', () => {
+  const csv = 'atalho;titulo;categoria;mensagem\nola;Oi;A;Olá\n;Sem atalho;A;x\nola;Repetida;A;y\nbom;Sem mensagem;A;\n\nok;Ok;A;Tudo certo\n';
+  const { rows, skipped } = QR.parseTeamText(csv);
+  assert.deepEqual(rows.map(r => r.shortcut), ['ola', 'ok']);
+  assert.deepEqual(skipped.map(s => s.linha), [3, 4, 5]);
+  assert.match(skipped[1].motivo, /duplicado/); assert.match(skipped[2].motivo, /Preencha/);
+  assert.throws(() => QR.parseCSV(csv), /atalho/i);
+  assert.throws(() => QR.parseTeamText('atalho;titulo;categoria;mensagem\n;a;b;c\n'), /Nenhuma linha .* válida.*Linha 2/);
+  assert.throws(() => QR.parseTeamText('<html>login</html>'), /não está pública/);
+});
+test('substituídas: só atalhos próprios do usuário com conteúdo diferente', () => {
+  const local = [{ shortcut: 'a', title: 'Minha', category: 'A', body: 'x' }, { shortcut: 'b', title: 'Igual', category: 'A', body: 'y' }, { shortcut: 'c', title: 'Da equipe antes', category: 'A', body: 'z' }];
+  const team = [{ shortcut: 'a', title: 'Planilha', category: 'A', body: 'w' }, { shortcut: 'b', title: 'Igual', category: 'A', body: 'y' }, { shortcut: 'c', title: 'Nova versão', category: 'A', body: 'z2' }];
+  assert.deepEqual(QR.replacedByTeam(local, team, ['c']), ['a']);
+});
+test('syncTeam grava erro de download, leitura e conteúdo; sucesso limpa o erro e registra linhas e substituídas', async () => {
+  const url = 'https://exemplo.com/equipe.csv', mine = [{ shortcut: 'a', title: 'Minha', category: 'A', body: 'x' }, { shortcut: 'b', title: 'Outra', category: 'A', body: 'y' }];
+  await QR.save(mine);
+  const serve = (body, status = 200) => { globalThis.fetch = async () => ({ ok: status < 400, status, text: async () => body }); };
+  const head = 'atalho;titulo;categoria;mensagem\n';
+  // A first connection that fails does not leave a half-connected team.
+  serve('<html>login</html>');
+  await assert.rejects(() => QR.syncTeam(url), /não está pública/);
+  assert.equal(await QR.loadTeam(), null);
+  serve(head + 'a;Da planilha;A;w\n;vazio;A;x\nb;Outra;A;y\n');
+  const ok = await QR.syncTeam(url);
+  assert.deepEqual(ok.replaced, ['a']); assert.deepEqual(ok.skipped.map(s => s.linha), [3]); assert.equal(ok.count, 2);
+  assert.equal((await QR.loadTeam()).error, undefined);
+  // Connected sheet: each kind of failure is recorded with errorAt.
+  serve('', 403);
+  await assert.rejects(() => QR.syncTeam(), /não está pública/);
+  let t = await QR.loadTeam(); assert.match(t.error, /baixar.*403/); assert.ok(t.errorAt); assert.equal(t.count, 2);
+  serve('<html>login</html>');
+  await assert.rejects(() => QR.syncTeam(), /não está pública/); assert.match((await QR.loadTeam()).error, /não está pública/);
+  serve(head + ';x;A;y\n');
+  await assert.rejects(() => QR.syncTeam(), /Não consegui ler a planilha/); assert.match((await QR.loadTeam()).error, /Nenhuma linha/);
+  serve('{"version":2}');
+  await assert.rejects(() => QR.syncTeam(), /Não consegui ler/);
+  serve(head + 'a;Da planilha;A;w\n');
+  t = await QR.syncTeam(); assert.equal(t.error, undefined); assert.equal((await QR.loadTeam()).error, undefined);
+  // Library writes are serialized: a save racing a sync is not lost.
+  serve(head + 'novo;Novo;A;n\n');
+  const racing = QR.syncTeam();
+  await QR.save([...(await QR.load()), { shortcut: 'meu', title: 'Meu', category: 'A', body: 'm' }]);
+  await racing;
+  assert.deepEqual((await QR.load()).map(r => r.shortcut).sort(), ['meu', 'novo']);
+});
+test('sincronização em segundo plano que termina depois de Desconectar não reconecta a planilha', async () => {
+  await QR.saveTeam({ url: 'https://exemplo.com/eq.csv', shortcuts: [] });
+  // The user disconnects while the download is still running.
+  globalThis.fetch = async () => { await QR.saveTeam(null); return { ok: true, status: 200, text: async () => 'atalho;titulo;categoria;mensagem\nx;X;Geral;Olá\n' }; };
+  assert.equal(await QR.syncTeam(), null);
+  assert.equal(await QR.loadTeam(), null);
 });
