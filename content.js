@@ -231,27 +231,40 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     // current DOM: editors like Lexical (WhatsApp Web) re-render text nodes on every key, so the range saved while typing is stale.
     const range = tokenRange(el, ctx.token);
     if (!range) { fail('Não foi possível selecionar o atalho neste editor. Use Copiar na extensão.'); return; }
-    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    const selection = window.getSelection();
     filling = true;
+    const refused = () => { filling = false; fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); };
     const done = () => { filling = false; close(); say('Resposta inserida. Revise antes de enviar.'); };
-    const landed = () => valueOf(el).includes(text.split('\n')[0].slice(0, 40));
-    // Framework editors keep their own model and drop direct DOM edits, but all of them handle paste.
-    // A plain contenteditable ignores the synthetic paste (not cancelled), so it falls through to native editing.
-    // The paste waits a frame so the editor has picked up the new selection before replacing it.
-    // Editors sync their selection from selectionchange; firing it now makes them read the token selection right away.
+    const slash = ctx.text.slice(ctx.token.start, ctx.token.end), head = text.split('\n')[0].slice(0, 40);
+    const landed = () => { const v = valueOf(el); return v.includes(head) && !v.includes(slash + head); };
+    // Caret right after the token, where the user stopped typing.
+    const caret = range.cloneRange(); caret.collapse(false); selection.removeAllRanges(); selection.addRange(caret);
     document.dispatchEvent(new Event('selectionchange'));
+    // Framework editors (Lexical on WhatsApp Web) keep their own model and selection: direct DOM edits and DOM selections are
+    // ignored. They do handle key commands and paste, so the token is erased with Backspace and the reply goes in as a paste.
+    // A plain contenteditable leaves the synthetic Backspace uncancelled (it does nothing), and uses native editing instead.
     requestAnimationFrame(() => {
-      const data = new DataTransfer(); data.setData('text/plain', text);
-      const paste = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
-      if (!el.dispatchEvent(paste)) {
-        setTimeout(() => { if (landed()) done(); else { filling = false; fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); } }, 60);
+      const key = () => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true, cancelable: true }));
+      if (!key()) {
+        // One key per frame: some editor versions apply only the first of several commands sent in the same tick.
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+        const target = ctx.text.slice(0, ctx.token.start) + ctx.text.slice(ctx.token.end);
+        (async () => {
+          for (let i = 1; i < slash.length && valueOf(el) !== target; i++) { await wait(16); key(); }
+          await wait(30);
+          if (valueOf(el) !== target) { refused(); return; }
+          const data = new DataTransfer(); data.setData('text/plain', text);
+          el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+          await wait(60);
+          if (landed()) done(); else refused();
+        })();
         return;
       }
       // Native editing retains undo support and emits input for simple rich text editors.
       const again = tokenRange(el, ctx.token); if (again) { selection.removeAllRanges(); selection.addRange(again); }
       const ok = document.execCommand('insertText', false, text);
       // Some editors report success and then roll the DOM back; check that the text stayed before closing.
-      setTimeout(() => { if (ok && landed()) done(); else { filling = false; fail('Este editor não aceitou a inserção. Use Copiar na extensão e cole na conversa.'); } }, 60);
+      setTimeout(() => { if (ok && landed()) done(); else refused(); }, 60);
     });
   }
   function tokenRange(el, token) {
@@ -343,7 +356,8 @@ input{width:100%;border:1px solid #ffffff24;border-radius:8px;padding:8px 10px;f
     const count = Math.min(matches.length, LIMIT);
     select(Math.abs(step) === 1 ? (index + step + count) % count : Math.max(0, Math.min(count - 1, index + step)), true, e.repeat);
   }, true);
-  document.addEventListener('keyup', e => { if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) refresh(e); }, true);
+  // Editors that render the first character themselves (Lexical on an empty field) fire no input event, so typed keys refresh too.
+  document.addEventListener('keyup', e => { if (['ArrowLeft','ArrowRight','Home','End','Backspace','Delete'].includes(e.key) || e.key.length === 1) refresh(e); }, true);
   window.addEventListener('pointermove', e => { const at = `${e.clientX},${e.clientY}`; pointerMoved = at !== pointer; pointer = at; }, true);
   // New messages scroll the conversation; follow the editor instead of closing the menu.
   window.addEventListener('scroll', () => { if (open) schedule(); }, true);
