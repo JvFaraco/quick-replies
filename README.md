@@ -47,7 +47,7 @@ Para testar sem nenhum sistema, abra a área de teste pelo link **Testar atalhos
 
 ## Biblioteca da equipe (planilha do Google)
 
-1. Na aba **Equipe**, clique em **Criar planilha no Google**: abre uma planilha nova e copia as respostas atuais como tabela. Cole na célula A1 (Ctrl+V) e as colunas `atalho`, `titulo`, `categoria` e `mensagem` já vêm prontas.
+1. Na aba **Equipe**, clique em **Criar planilha no Google** e depois em **Fazer uma cópia**: vem um modelo com as colunas `atalho`, `titulo`, `categoria` e `mensagem`, 3 exemplos de cada tipo de equipe e uma aba "Como usar". Para começar com as respostas que você já tem na extensão, use **Abrir planilha em branco e copiar** e cole na célula A1.
 2. Compartilhar → Acesso geral → **Qualquer pessoa com o link**, como Leitor.
 3. Cada atendente cola o link da planilha na aba **Equipe** e clica em **Conectar**.
 
