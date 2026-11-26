@@ -86,6 +86,14 @@ PW_CHANNEL=msedge npm test     # sem Chrome instalado, usa o Edge
 PW_CHANNEL=chromium npm test   # Chromium do Playwright (é o que a CI usa)
 ```
 
+Antes de publicar, rode também os editores de chat de verdade (precisa de internet, eles vêm do esm.sh e do jsDelivr):
+
+```bash
+PW_CHANNEL=chromium npm run test:editores
+```
+
+Ele carrega a extensão num campo de texto, num editor simples, no Lexical (o editor do WhatsApp Web, em texto simples e formatado), no ProseMirror/TipTap e no Quill, e em cada um confere cinco casos pelo texto que o próprio editor guarda: `/finalizar` + Enter, texto antes + Tab com resposta de várias linhas, campo na hora (`/protocolo`), atalho na segunda linha e o `/` sozinho abrindo o menu. A tabela sai no terminal e em `test-results/editores.md`. Para comparar com outra versão, aponte `QR_DIR` para a pasta com os arquivos dela.
+
 Os testes do pacote conferem que o `.zip` leva todos os arquivos que a extensão carrega, que `manifest.json` e `package.json` têm a mesma versão e que a cópia da extensão em `docs/extensao/` está em dia.
 
 ## Publicar uma versão
