@@ -73,7 +73,8 @@
 
   // CSV: ; or , as separator, quoted fields with embedded quotes and line breaks, headers in Portuguese or English.
   const HEADERS = { shortcut: ['atalho', 'shortcut', 'comando'], title: ['titulo', 'title', 'nome'], category: ['categoria', 'category', 'grupo', 'assunto'], body: ['mensagem', 'body', 'texto', 'resposta', 'conteudo'] };
-  function parseCSV(text) {
+  // Raw records with the sheet row number (header = row 1, blank rows counted), not yet validated.
+  function csvRecords(text) {
     let src = text.replace(/^﻿/, '');
     const pinned = src.match(/^sep=(.)\r?\n/i);
     if (pinned) src = src.slice(pinned[0].length);
@@ -91,15 +92,43 @@
       else field += c;
     }
     rows.at(-1).push(field);
-    const table = rows.filter(r => r.some(v => v.trim()));
+    const table = rows.map((r, i) => ({ r, linha: i + 1 })).filter(x => x.r.some(v => v.trim()));
     if (table.length < 2) throw Error('O CSV precisa de um cabeçalho e ao menos uma linha.');
-    const header = table[0].map(h => normalize(h.trim()));
+    const header = table[0].r.map(h => normalize(h.trim()));
     const at = {};
     for (const [key, names] of Object.entries(HEADERS)) {
       at[key] = header.findIndex(h => names.includes(h));
       if (at[key] < 0) throw Error(`Falta a coluna "${names[0]}" no cabeçalho do CSV.`);
     }
-    return validate(table.slice(1).map(r => ({ shortcut: r[at.shortcut] ?? '', title: unquote(r[at.title] ?? ''), category: unquote(r[at.category] ?? ''), body: unquote(r[at.body] ?? '') })));
+    return table.slice(1).map(({ r, linha }) => ({ linha, row: { shortcut: r[at.shortcut] ?? '', title: unquote(r[at.title] ?? ''), category: unquote(r[at.category] ?? ''), body: unquote(r[at.body] ?? '') } }));
+  }
+  const parseCSV = text => validate(csvRecords(text).map(x => x.row));
+  // Lenient reading for the team sheet: invalid rows are skipped and reported with their sheet row number; a first row wins on a repeated shortcut.
+  const MAX_SKIPPED = 100;
+  function lenient(records) {
+    const rows = [], skipped = [], seen = new Set();
+    let ignored = 0;
+    for (const { linha, row } of records) {
+      try {
+        if (rows.length >= 500) throw Error('Passou do limite de 500 respostas.');
+        const [clean] = validate([row]);
+        if (seen.has(clean.shortcut)) throw Error(`Atalho duplicado: /${clean.shortcut}.`);
+        seen.add(clean.shortcut); rows.push(clean);
+      } catch (err) { if (skipped.length < MAX_SKIPPED) skipped.push({ linha, motivo: err.message }); else ignored++; }
+    }
+    if (!rows.length) throw Error(skipped.length ? `Nenhuma linha da planilha é válida. Linha ${skipped[0].linha}: ${skipped[0].motivo}` : 'A planilha não tem nenhuma resposta.');
+    return { rows, skipped, ignored };
+  }
+  function parseTeamText(text) {
+    const src = text.replace(/^﻿/, '').trim();
+    if (src.startsWith('{')) {
+      const data = JSON.parse(src);
+      if (data.version !== 1) throw Error('Versão de biblioteca não reconhecida.');
+      if (!Array.isArray(data.library)) throw Error('O JSON não traz a lista "library".');
+      return lenient(data.library.map((row, i) => ({ linha: i + 1, row })));
+    }
+    if (src.startsWith('<')) throw Error(HTML_ERROR);
+    return lenient(csvRecords(src));
   }
   // A value starting with = + - @ would run as a formula when the CSV is opened in a spreadsheet. The quote prefix neutralizes it
   // and parseCSV removes it again. A spreadsheet reading with the wrong separator can also start a cell after any , ; tab or line
@@ -134,10 +163,11 @@
     }
     return u.href;
   }
+  const HTML_ERROR = 'A planilha não está pública: o link devolveu uma página de login, não os dados. Na planilha, use Compartilhar → Acesso geral → "Qualquer pessoa com o link" como Leitor.';
   function parseLibraryText(text) {
     const src = text.replace(/^﻿/, '').trim();
     if (src.startsWith('{')) { const data = JSON.parse(src); if (data.version !== 1) throw Error('Versão de biblioteca não reconhecida.'); return validate(data.library); }
-    if (src.startsWith('<')) throw Error('O link devolveu uma página, não a planilha. Confira se ela está compartilhada com "qualquer pessoa com o link".');
+    if (src.startsWith('<')) throw Error(HTML_ERROR);
     return parseCSV(src);
   }
   // Team rows win; local rows survive unless they came from the team before and were removed from the sheet.
@@ -145,37 +175,60 @@
     const teamRows = validate(team), owned = new Set([...previous, ...teamRows.map(r => r.shortcut)]);
     return validate([...teamRows, ...current.filter(r => !owned.has(r.shortcut))]);
   }
+  // Shortcuts of the user's own replies (not from the sheet before) that the sheet version overwrote with different content.
+  function replacedByTeam(current, team, previous = []) {
+    const before = new Set(previous), mine = new Map(current.map(r => [r.shortcut, r]));
+    return validate(team).filter(t => { const m = mine.get(t.shortcut); return m && !before.has(t.shortcut) && (m.title !== t.title || m.category !== t.category || m.body !== t.body); }).map(t => t.shortcut);
+  }
+  // Simple queue: library writes (save, sync) run one at a time so a sync cannot overwrite an edit and vice versa.
+  let queue = Promise.resolve();
+  const serial = fn => { const run = queue.then(fn); queue = run.catch(() => {}); return run; };
 
   const store = typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null;
-  globalThis.QR = { normalize, validate, search, token, variables, fill, merge, automatic, validateVariables, known, missing, sitePattern, validateSites, parseCSV, toCSV, toSheet, teamUrl, parseLibraryText, applyTeam,
+  globalThis.QR = { normalize, validate, search, token, variables, fill, merge, automatic, validateVariables, known, missing, sitePattern, validateSites, parseCSV, toCSV, toSheet, teamUrl, parseLibraryText, parseTeamText, applyTeam, replacedByTeam,
     // One-step undo for replacing or importing: the previous library is kept until the next replacement.
     async saveBackup(rows) { await store.set({ backup: { library: validate(rows), at: Date.now() } }); },
     async loadBackup() { const { backup } = await store.get('backup'); return backup ? { library: validate(backup.library), at: backup.at } : null; },
     async clearBackup() { await store.remove('backup'); },
     async loadTeam() { const { team } = await store.get('team'); return team && typeof team.url === 'string' ? team : null; },
-    async saveTeam(team) { if (team) await store.set({ team }); else await store.remove('team'); },
+    saveTeam(team) { return serial(() => team ? store.set({ team }) : store.remove('team')); },
     // Downloads the team sheet and applies it. Called from the options page (connect, sync now) and from the service worker (alarm, startup).
+    // Every failure (download, reading, validation, saving) is recorded in team.error/errorAt when the sheet is the connected one.
+    // Invalid rows do not stop the sync: they are skipped and listed in team.skipped ({ linha, motivo }, linha = sheet row, header = 1).
     async syncTeam(url) {
-      const team = (await QR.loadTeam()) || {}, target = url || team.url;
+      const first = (await QR.loadTeam()) || {}, target = url || first.url;
       if (!target) return null;
-      let text;
+      const mark = async message => { const t = await QR.loadTeam(); if (t && t.url === target) await store.set({ team: { ...t, error: message, errorAt: Date.now() } }); };
+      const fail = async message => { try { await serial(() => mark(message)); } catch {} throw Error(message); };
+      let text, problem;
       try {
         const res = await fetch(target, { cache: 'no-store', credentials: 'omit' });
-        if (!res.ok) throw Error(`HTTP ${res.status}`);
+        if (!res.ok) throw Error(res.status === 401 || res.status === 403 || res.status === 404 ? `HTTP ${res.status}: a planilha não está pública ou o link mudou` : `HTTP ${res.status}`);
         text = await res.text();
-      } catch (err) {
-        await QR.saveTeam({ ...team, url: target, error: `Não consegui baixar a planilha (${err.message}).`, errorAt: Date.now() });
-        throw Error(`Não consegui baixar a planilha (${err.message}).`);
-      }
-      const rows = parseLibraryText(text);
-      const library = applyTeam(await QR.load(), rows, team.shortcuts || []);
-      await store.set({ library });
-      const next = { url: target, shortcuts: rows.map(r => r.shortcut), count: rows.length, syncedAt: Date.now() };
-      await QR.saveTeam(next);
-      return next;
+      } catch (err) { problem = `Não consegui baixar a planilha (${err.message}).`; }
+      if (problem) return fail(problem);
+      let parsed;
+      try { parsed = parseTeamText(text); }
+      catch (err) { return fail(err.message === HTML_ERROR ? HTML_ERROR : `Não consegui ler a planilha: ${err.message}`); }
+      return serial(async () => {
+        try {
+          // Read inside the queue: an edit saved while the download ran must not be lost.
+          const team = (await QR.loadTeam()) || {}, current = await QR.load(), previous = team.shortcuts || [];
+          // A background sync (no url given) that finishes after "Desconectar" or a switch to another sheet must not bring the old one back.
+          if (!url && team.url !== target) return null;
+          const library = applyTeam(current, parsed.rows, previous), replaced = replacedByTeam(current, parsed.rows, previous);
+          const next = { url: target, shortcuts: parsed.rows.map(r => r.shortcut), count: parsed.rows.length, syncedAt: Date.now(), skipped: parsed.skipped, skippedMore: parsed.ignored, replaced };
+          await store.set({ library, team: next });
+          return next;
+        } catch (err) {
+          const message = `Não consegui salvar as respostas da planilha: ${err.message}`;
+          try { await mark(message); } catch {}
+          throw Error(message);
+        }
+      });
     },
     async load() { const { library } = await store.get('library'); return library === undefined ? structuredClone(QR_DEFAULTS) : validate(library); },
-    async save(rows) { const library = validate(rows); await store.set({ library }); return library; },
+    async save(rows) { const library = validate(rows); return serial(async () => { await store.set({ library }); return library; }); },
     async loadVariables() { const { variables } = await store.get('variables'); return variables ? validateVariables(variables) : {}; },
     async saveVariables(obj) { const variables = validateVariables(obj); await store.set({ variables }); return variables; },
     // No site comes enabled out of the box: the user enables each chat with "Ativar nesta aba".

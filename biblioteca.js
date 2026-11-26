@@ -49,7 +49,7 @@ function download(name, content, type) {
 // Replacing or importing keeps the previous library for one-step undo.
 async function replaceWithUndo(next, message) {
   const before = rows;
-  await persist(next); await QR.saveBackup(before); reset();
+  await QR.saveBackup(before); await persist(next); reset();
   status(message); $('undo').hidden = false;
 }
 $('undo').onclick = async () => {
@@ -69,7 +69,10 @@ function showTab(name, focus = false) {
     if (on) { if (focus) tab.focus(); tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
   }
   document.querySelectorAll('.pane').forEach(pane => { pane.hidden = pane.id !== `tab-${name}`; });
-  $('new').hidden = name !== 'respostas';
+  // The title, count, "+ Nova resposta" and the editing hint belong to the Respostas tab; the others show their own name.
+  const respostas = name === 'respostas';
+  $('new').hidden = !respostas; $('count').hidden = !respostas; $('count').style.display = respostas ? '' : 'none'; // .badge sets its own display, which beats [hidden]
+  $('heading').textContent = respostas ? 'Respostas rápidas' : tabs.find(t => t.dataset.tab === name).textContent;
   // The idle hint talks about the Respostas tab; the others have their own intro. Feedback messages stay as they are.
   const s = $('status'); if (!s.textContent || s.textContent === HINT) s.textContent = name === 'respostas' ? HINT : '';
   if (name === 'variaveis') renderAuto();
@@ -168,16 +171,32 @@ async function renderTeam() {
   if (!team) return;
   $('team-url-view').textContent = team.url;
   $('team-open').href = team.url.replace(/\/export\?format=csv.*$/, '/edit');
-  $('team-meta').textContent = team.error ? `${team.error} Última sincronização com sucesso: ${team.syncedAt ? when(team.syncedAt) : 'nenhuma'}.` : `${team.count} respostas da equipe · atualizada em ${when(team.syncedAt)} · próxima atualização automática em até 30 minutos.`;
+  const last = team.syncedAt ? when(team.syncedAt) : 'nenhuma';
+  $('team-meta').textContent = team.error
+    ? `Erro${team.errorAt ? ` em ${when(team.errorAt)}` : ''}: ${team.error} Última sincronização com sucesso: ${last}. Nova tentativa automática em até 10 minutos.`
+    : `${team.count} respostas da equipe · atualizada em ${last} · próxima atualização em até 10 minutos.`;
   $('team-meta').className = team.error ? 'error' : '';
+  const skipped = team.skipped || [], more = Math.max(0, skipped.length - 5) + (team.skippedMore || 0);
+  $('team-skipped').hidden = !skipped.length;
+  $('team-skipped').textContent = skipped.length ? `${skipped.length + (team.skippedMore || 0)} linhas da planilha foram ignoradas: ${skipped.slice(0, 5).map(s => `linha ${s.linha} (${s.motivo})`).join('; ')}${more ? ` e mais ${more}` : ''}.` : '';
+}
+const slashList = shortcuts => shortcuts.map(s => '/' + s).join(', ');
+function syncNote(result) {
+  const n = (result.skipped?.length || 0) + (result.skippedMore || 0);
+  return n ? ` ${n} linhas da planilha foram ignoradas (veja na aba Equipe).` : '';
 }
 async function connect(url) {
-  const before = rows;
-  try { await chrome.permissions.request({ origins: [`${new URL(url).origin}/*`] }); } catch {}
+  const before = rows, origin = `${new URL(url).origin}/*`;
+  let granted = true;
+  try { granted = await chrome.permissions.request({ origins: [origin] }); } catch {}
+  if (granted === false) throw Error('Sem a permissão de acesso à planilha não dá para conectar. Tente de novo e permita o acesso quando o Chrome perguntar.');
   const result = await QR.syncTeam(url);
   await QR.saveBackup(before); await reload(); reset(); await renderTeam();
-  status(`Planilha conectada: ${result.count} respostas da equipe. Suas respostas próprias foram mantidas.`); $('undo').hidden = false;
+  const swapped = result.replaced.length;
+  status(`Planilha conectada: ${result.count} respostas da equipe. ${swapped ? `${swapped} ${swapped > 1 ? 'respostas suas com o mesmo atalho foram trocadas' : 'resposta sua com o mesmo atalho foi trocada'} pela versão da planilha: ${slashList(result.replaced)}. Dá para desfazer.` : 'Suas respostas próprias foram mantidas.'}${syncNote(result)}`); $('undo').hidden = false;
 }
+// A site the user enabled keeps its permission even when the sheet lives on the same origin.
+const coversOrigin = (site, origin) => { const o = new URL(origin), s = new URL(site.replace('*.', '')); return site === `${o.origin}/*` || (site.startsWith(`${o.protocol}//*.`) && (o.hostname === s.hostname || o.hostname.endsWith('.' + s.hostname))); };
 $('team-form').onsubmit = async e => {
   e.preventDefault();
   const url = QR.teamUrl($('team-url').value);
@@ -188,13 +207,22 @@ $('team-form').onsubmit = async e => {
 };
 $('team-sync').onclick = async () => {
   $('team-sync').disabled = true;
-  try { const result = await QR.syncTeam(); await reload(); reset(); await renderTeam(); status(`Planilha sincronizada: ${result.count} respostas da equipe.`); }
+  try { const result = await QR.syncTeam(); await reload(); reset(); await renderTeam(); const swapped = result.replaced.length; status(`Planilha sincronizada: ${result.count} respostas da equipe.${swapped ? ` ${swapped} suas com o mesmo atalho foram trocadas pela versão da planilha: ${slashList(result.replaced)}.` : ''}${syncNote(result)}`); }
   catch (err) { status(err.message, true); await renderTeam(); }
   finally { $('team-sync').disabled = false; }
 };
 $('team-disconnect').onclick = async () => {
   if (!confirm('Desconectar a planilha? As respostas atuais continuam na sua biblioteca, mas param de atualizar.')) return;
-  await QR.saveTeam(null); await reload(); await renderTeam(); status('Planilha desconectada.');
+  const current = await QR.loadTeam();
+  await QR.saveTeam(null);
+  // Give the sheet's origin permission back, unless the same origin is a site the user enabled.
+  if (current) {
+    try {
+      const origin = `${new URL(current.url).origin}/*`;
+      if (!(await QR.loadSites()).some(site => coversOrigin(site, origin))) await chrome.permissions.remove({ origins: [origin] });
+    } catch {}
+  }
+  await reload(); await renderTeam(); status('Planilha desconectada.');
 };
 // Copies the library as a table (pastes into the four columns) and opens a blank Google Sheet. Without clipboard, falls back to the CSV file.
 $('team-sheet').onclick = async () => {

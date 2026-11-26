@@ -28,7 +28,7 @@ Não há servidor próprio, conta, login, cookies, anúncios nem ferramentas de 
 
 ## Acesso à rede
 
-O único acesso à rede é baixar a planilha da equipe que o próprio usuário conectou na aba **Equipe**, no endereço `https` que ele informou. O download acontece ao conectar, ao clicar em **Sincronizar agora**, ao abrir o navegador e a cada 30 minutos. A requisição não leva cookies nem dados do usuário; como em qualquer acesso a um site, o servidor da planilha (normalmente o Google) recebe o endereço IP e os cabeçalhos comuns do navegador. A sincronização para quando o usuário clica em **Desconectar**.
+O único acesso à rede é baixar a planilha da equipe que o próprio usuário conectou na aba **Equipe**, no endereço `https` que ele informou. O download acontece ao conectar, ao clicar em **Sincronizar agora**, ao abrir o navegador, a cada 10 minutos e ao abrir o popup da extensão (se a última atualização tiver mais de 5 minutos). A requisição não leva cookies nem dados do usuário; como em qualquer acesso a um site, o servidor da planilha (normalmente o Google) recebe o endereço IP e os cabeçalhos comuns do navegador. A sincronização para quando o usuário clica em **Desconectar**, que também remove a permissão de acesso ao endereço da planilha (a menos que ele seja um site ativado pelo usuário).
 
 A extensão não baixa nem executa código remoto: a planilha é lida como texto (CSV ou JSON) e validada antes de entrar na biblioteca.
 
@@ -39,7 +39,7 @@ A extensão não baixa nem executa código remoto: a planilha é lida como texto
 | `storage` | Guardar a biblioteca e as configurações no navegador. |
 | `activeTab` | Saber o endereço da aba e inserir o menu nela quando o usuário clica em **Ativar nesta aba**. |
 | `scripting` | Inserir o menu de respostas na aba ativada e registrá-lo nos sites que o usuário salvou, para que o `/` funcione sozinho da próxima vez. |
-| `alarms` | Atualizar a planilha da equipe a cada 30 minutos. |
+| `alarms` | Atualizar a planilha da equipe a cada 10 minutos. |
 | Acesso opcional a outros sites | Pedido ao navegador somente quando o usuário ativa a extensão naquele site, e só para aquele site. Pode ser removido na aba **Sites**. |
 
 ## Como apagar os dados
@@ -92,7 +92,7 @@ There is no server, account, login, cookies, ads or analytics. The popup's **Cop
 
 ## Network access
 
-The only network access is downloading the team spreadsheet the user connected in the **Equipe** (Team) tab, from the `https` address the user entered. The download runs on connect, on **Sincronizar agora** (Sync now), at browser startup and every 30 minutes. The request carries no cookies or user data; as with any web request, the spreadsheet's server (usually Google) receives the IP address and standard browser headers. Syncing stops when the user clicks **Desconectar** (Disconnect).
+The only network access is downloading the team spreadsheet the user connected in the **Equipe** (Team) tab, from the `https` address the user entered. The download runs on connect, on **Sincronizar agora** (Sync now), at browser startup, every 10 minutes and when the popup opens (if the last update is older than 5 minutes). The request carries no cookies or user data; as with any web request, the spreadsheet's server (usually Google) receives the IP address and standard browser headers. Syncing stops when the user clicks **Desconectar** (Disconnect), which also removes the permission for the spreadsheet's address (unless it is a site the user enabled).
 
 The extension does not download or run remote code: the spreadsheet is read as text (CSV or JSON) and validated before it enters the library.
 
@@ -103,7 +103,7 @@ The extension does not download or run remote code: the spreadsheet is read as t
 | `storage` | Keep the library and settings in the browser. |
 | `activeTab` | Read the tab address and insert the menu into it when the user clicks **Ativar nesta aba**. |
 | `scripting` | Insert the reply menu into the enabled tab and register it on the sites the user saved, so `/` works there by itself next time. |
-| `alarms` | Refresh the team spreadsheet every 30 minutes. |
+| `alarms` | Refresh the team spreadsheet every 10 minutes. |
 | Optional access to other sites | Requested from the browser only when the user enables the extension on that site, and only for that site. Can be removed in the **Sites** tab. |
 
 ## Deleting data

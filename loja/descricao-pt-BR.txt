@@ -13,7 +13,7 @@ VARIÁVEIS
 • Qualquer outra variável, como {{nome}} ou {{pedido}}, abre um formulário curto antes de inserir.
 
 BIBLIOTECA DA EQUIPE
-• O gestor mantém uma planilha do Google com as respostas. Cada atendente cola o link uma vez e a extensão atualiza sozinha a cada 30 minutos.
+• O gestor mantém uma planilha do Google com as respostas. Cada atendente cola o link uma vez e a extensão atualiza sozinha a cada 10 minutos.
 • As respostas próprias do atendente continuam dele.
 
 PRONTA PARA USAR

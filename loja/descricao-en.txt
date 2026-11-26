@@ -13,7 +13,7 @@ VARIABLES
 • Any other variable, such as {{nome}} or {{pedido}}, opens a short form before inserting.
 
 TEAM LIBRARY
-• A manager keeps the replies in a Google Sheet. Each agent pastes the link once and the extension refreshes it every 30 minutes.
+• A manager keeps the replies in a Google Sheet. Each agent pastes the link once and the extension refreshes it every 10 minutes.
 • Each agent's own replies stay theirs.
 
 READY TO USE

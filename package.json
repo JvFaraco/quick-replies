@@ -1,11 +1,12 @@
 {
   "name": "quick-replies",
-  "version": "1.3.2",
+  "version": "1.3.5",
   "private": true,
   "license": "MIT",
   "scripts": {
     "test": "node --test tests/core.test.cjs tests/pacote.test.cjs && playwright test",
     "test:browser": "playwright test",
+    "test:editores": "node scripts/testar-editores.cjs",
     "demo": "node scripts/copiar-demo.cjs",
     "loja": "node scripts/gerar-loja.cjs"
   },
